@@ -34,6 +34,12 @@
 #include"../../../include/System.h"
 #include"../include/ImuTypes.h"
 
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Point.h>
+#include <geometry_msgs/Quaternion.h>
+#include <tf/transform_broadcaster.h>
+#include <vector>
+#include "Converter.h"
 using namespace std;
 
 class ImuGrabber
@@ -56,14 +62,20 @@ public:
     cv::Mat GetImage(const sensor_msgs::ImageConstPtr &img_msg);
     void SyncWithImu();
 
+
+    //method for setting ROS publisher
+    void SetPub(ros::Publisher* pub);
+
+
     queue<sensor_msgs::ImageConstPtr> imgLeftBuf, imgRightBuf;
     std::mutex mBufMutexLeft,mBufMutexRight;
    
     ORB_SLAM3::System* mpSLAM;
     ImuGrabber *mpImuGb;
 
-    const bool do_rectify;
+    bool do_rectify,pub_tf = true, pub_pose= true;
     cv::Mat M1l,M2l,M1r,M2r;
+    ros::Publisher* orb_pub;
 
     const bool mbClahe;
     cv::Ptr<cv::CLAHE> mClahe = cv::createCLAHE(3.0, cv::Size(8, 8));
@@ -137,10 +149,18 @@ int main(int argc, char **argv)
         cv::initUndistortRectifyMap(K_r,D_r,R_r,P_r.rowRange(0,3).colRange(0,3),cv::Size(cols_r,rows_r),CV_32F,igb.M1r,igb.M2r);
     }
 
+
+  ros::Publisher pose_pub = n.advertise<geometry_msgs::PoseStamped>("orb_pose", 100);
+
   // Maximum delay, 5 seconds
-  ros::Subscriber sub_imu = n.subscribe("/imu", 1000, &ImuGrabber::GrabImu, &imugb); 
-  ros::Subscriber sub_img_left = n.subscribe("/camera/left/image_raw", 100, &ImageGrabber::GrabImageLeft,&igb);
-  ros::Subscriber sub_img_right = n.subscribe("/camera/right/image_raw", 100, &ImageGrabber::GrabImageRight,&igb);
+  ros::Subscriber sub_imu = n.subscribe("/camera/imu", 1000, &ImuGrabber::GrabImu, &imugb); 
+  ros::Subscriber sub_img_left = n.subscribe("/camera/fisheye1/image_raw", 100, &ImageGrabber::GrabImageLeft,&igb);
+  ros::Subscriber sub_img_right = n.subscribe("/camera/fisheye2/image_raw", 100, &ImageGrabber::GrabImageRight,&igb);
+
+
+  //create publisher 
+  igb.SetPub(&pose_pub);
+
 
   std::thread sync_thread(&ImageGrabber::SyncWithImu,&igb);
 
@@ -149,6 +169,12 @@ int main(int argc, char **argv)
   return 0;
 }
 
+
+//method for assigning publisher
+void ImageGrabber::SetPub(ros::Publisher* pub)
+{
+  orb_pub = pub;
+}
 
 
 void ImageGrabber::GrabImageLeft(const sensor_msgs::ImageConstPtr &img_msg)
@@ -267,7 +293,43 @@ void ImageGrabber::SyncWithImu()
         cv::remap(imRight,imRight,M1r,M2r,cv::INTER_LINEAR);
       }
 
-      mpSLAM->TrackStereo(imLeft,imRight,tImLeft,vImuMeas);
+
+      cv::Mat T_, R_, t_ ;
+
+      T_ = mpSLAM->TrackStereo(imLeft,imRight,tImLeft,vImuMeas);
+      if (pub_tf || pub_pose)
+      {    
+        if (!(T_.empty())) {
+
+          cv::Size s = T_.size();
+          if ((s.height >= 3) && (s.width >= 3)) {
+            R_ = T_.rowRange(0,3).colRange(0,3).t();
+            t_ = -R_*T_.rowRange(0,3).col(3);
+            vector<float> q = ORB_SLAM3::Converter::toQuaternion(R_);
+            float scale_factor=1.0;
+            tf::Transform transform;
+            transform.setOrigin(tf::Vector3(t_.at<float>(0, 0)*scale_factor, t_.at<float>(0, 1)*scale_factor, t_.at<float>(0, 2)*scale_factor));
+            tf::Quaternion tf_quaternion(q[0], q[1], q[2], q[3]);
+            transform.setRotation(tf_quaternion);
+          /*
+          if (pub_tf)
+            {
+              static tf::TransformBroadcaster br_;
+              br_.sendTransform(tf::StampedTransform(transform, ros::Time(tIm), "world", "ORB_SLAM3_MONO_INERTIAL"));
+            }
+          */
+
+          if (pub_pose)
+            {
+              geometry_msgs::PoseStamped pose;
+              //pose.header.stamp = img0Buf.front()->header.stamp;
+              pose.header.frame_id ="ORB_SLAM3_MONO_INERTIAL";
+              tf::poseTFToMsg(transform, pose.pose);
+              orb_pub->publish(pose);
+            }            
+          }
+        }
+     }
 
       std::chrono::milliseconds tSleep(1);
       std::this_thread::sleep_for(tSleep);
