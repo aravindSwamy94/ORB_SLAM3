@@ -1,45 +1,11 @@
 /**
-* This file is part of ORB-SLAM3
+* 
+* Adapted from ORB-SLAM3: Examples/ROS/src/ros_stereo_inertial.cc
 *
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-* Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-*
-* ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
-* License as published by the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* ORB-SLAM3 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
-* the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License along with ORB-SLAM3.
-* If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<chrono>
-#include<vector>
-#include<queue>
-#include<thread>
-#include<mutex>
+#include "common.h"
 
-#include<ros/ros.h>
-#include<cv_bridge/cv_bridge.h>
-#include<sensor_msgs/Imu.h>
-
-#include<opencv2/core/core.hpp>
-
-#include"../../../include/System.h"
-#include"../include/ImuTypes.h"
-
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/Point.h>
-#include <geometry_msgs/Quaternion.h>
-#include <tf/transform_broadcaster.h>
-#include <vector>
-#include "Converter.h"
 using namespace std;
 
 class ImuGrabber
@@ -62,26 +28,18 @@ public:
     cv::Mat GetImage(const sensor_msgs::ImageConstPtr &img_msg);
     void SyncWithImu();
 
-
-    //method for setting ROS publisher
-    void SetPub(ros::Publisher* pub);
-
-
     queue<sensor_msgs::ImageConstPtr> imgLeftBuf, imgRightBuf;
     std::mutex mBufMutexLeft,mBufMutexRight;
    
     ORB_SLAM3::System* mpSLAM;
     ImuGrabber *mpImuGb;
 
-    bool do_rectify,pub_tf = true, pub_pose= true;
+    const bool do_rectify;
     cv::Mat M1l,M2l,M1r,M2r;
-    ros::Publisher* orb_pub;
 
     const bool mbClahe;
     cv::Ptr<cv::CLAHE> mClahe = cv::createCLAHE(3.0, cv::Size(8, 8));
 };
-
-
 
 int main(int argc, char **argv)
 {
@@ -149,74 +107,63 @@ int main(int argc, char **argv)
         cv::initUndistortRectifyMap(K_r,D_r,R_r,P_r.rowRange(0,3).colRange(0,3),cv::Size(cols_r,rows_r),CV_32F,igb.M1r,igb.M2r);
     }
 
+    // Maximum delay, 5 seconds * 200Hz = 1000 samples
+    ros::Subscriber sub_imu = n.subscribe("/camera/imu", 1000, &ImuGrabber::GrabImu, &imugb); 
+    ros::Subscriber sub_img_left = n.subscribe("/camera/fisheye1/image_raw", 100, &ImageGrabber::GrabImageLeft, &igb);
+    ros::Subscriber sub_img_right = n.subscribe("/camera/fisheye2/image_raw", 100, &ImageGrabber::GrabImageRight, &igb);
 
-  ros::Publisher pose_pub = n.advertise<geometry_msgs::PoseStamped>("orb_pose", 100);
+    pose_pub = n.advertise<geometry_msgs::PoseStamped> ("/orb_slam3_ros/camera", 1);
+    map_points_pub = n.advertise<sensor_msgs::PointCloud2>("orb_slam3_ros/map_points", 1);
 
-  // Maximum delay, 5 seconds
-  ros::Subscriber sub_imu = n.subscribe("/camera/imu", 1000, &ImuGrabber::GrabImu, &imugb); 
-  ros::Subscriber sub_img_left = n.subscribe("/camera/fisheye1/image_raw", 100, &ImageGrabber::GrabImageLeft,&igb);
-  ros::Subscriber sub_img_right = n.subscribe("/camera/fisheye2/image_raw", 100, &ImageGrabber::GrabImageRight,&igb);
+    setup_tf_orb_to_ros(ORB_SLAM3::System::IMU_STEREO);
 
+    std::thread sync_thread(&ImageGrabber::SyncWithImu, &igb);
 
-  //create publisher 
-  igb.SetPub(&pose_pub);
+    ros::spin();
 
-
-  std::thread sync_thread(&ImageGrabber::SyncWithImu,&igb);
-
-  ros::spin();
-
-  return 0;
+    return 0;
 }
-
-
-//method for assigning publisher
-void ImageGrabber::SetPub(ros::Publisher* pub)
-{
-  orb_pub = pub;
-}
-
 
 void ImageGrabber::GrabImageLeft(const sensor_msgs::ImageConstPtr &img_msg)
 {
-  mBufMutexLeft.lock();
-  if (!imgLeftBuf.empty())
-    imgLeftBuf.pop();
-  imgLeftBuf.push(img_msg);
-  mBufMutexLeft.unlock();
+    mBufMutexLeft.lock();
+    if (!imgLeftBuf.empty())
+        imgLeftBuf.pop();
+    imgLeftBuf.push(img_msg);
+    mBufMutexLeft.unlock();
 }
 
 void ImageGrabber::GrabImageRight(const sensor_msgs::ImageConstPtr &img_msg)
 {
-  mBufMutexRight.lock();
-  if (!imgRightBuf.empty())
-    imgRightBuf.pop();
-  imgRightBuf.push(img_msg);
-  mBufMutexRight.unlock();
+    mBufMutexRight.lock();
+    if (!imgRightBuf.empty())
+        imgRightBuf.pop();
+    imgRightBuf.push(img_msg);
+    mBufMutexRight.unlock();
 }
 
 cv::Mat ImageGrabber::GetImage(const sensor_msgs::ImageConstPtr &img_msg)
 {
-  // Copy the ros image message to cv::Mat.
-  cv_bridge::CvImageConstPtr cv_ptr;
-  try
-  {
-    cv_ptr = cv_bridge::toCvShare(img_msg, sensor_msgs::image_encodings::MONO8);
-  }
-  catch (cv_bridge::Exception& e)
-  {
-    ROS_ERROR("cv_bridge exception: %s", e.what());
-  }
-  
-  if(cv_ptr->image.type()==0)
-  {
-    return cv_ptr->image.clone();
-  }
-  else
-  {
-    std::cout << "Error type" << std::endl;
-    return cv_ptr->image.clone();
-  }
+    // Copy the ros image message to cv::Mat.
+    cv_bridge::CvImageConstPtr cv_ptr;
+    try
+    {
+        cv_ptr = cv_bridge::toCvShare(img_msg, sensor_msgs::image_encodings::MONO8);
+    }
+    catch (cv_bridge::Exception& e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+    }
+    
+    if(cv_ptr->image.type()==0)
+    {
+        return cv_ptr->image.clone();
+    }
+    else
+    {
+        std::cout << "Error type" << std::endl;
+        return cv_ptr->image.clone();
+    }
 }
 
 void ImageGrabber::SyncWithImu()
@@ -257,6 +204,7 @@ void ImageGrabber::SyncWithImu()
 
       this->mBufMutexLeft.lock();
       imLeft = GetImage(imgLeftBuf.front());
+      ros::Time current_frame_time = imgLeftBuf.front()->header.stamp;
       imgLeftBuf.pop();
       this->mBufMutexLeft.unlock();
 
@@ -293,43 +241,12 @@ void ImageGrabber::SyncWithImu()
         cv::remap(imRight,imRight,M1r,M2r,cv::INTER_LINEAR);
       }
 
+        // Main algorithm runs here
+      cv::Mat Tcw = mpSLAM->TrackStereo(imLeft,imRight,tImLeft,vImuMeas);
 
-      cv::Mat T_, R_, t_ ;
+        publish_ros_pose_tf(Tcw, current_frame_time, ORB_SLAM3::System::IMU_STEREO);
 
-      T_ = mpSLAM->TrackStereo(imLeft,imRight,tImLeft,vImuMeas);
-      if (pub_tf || pub_pose)
-      {    
-        if (!(T_.empty())) {
-
-          cv::Size s = T_.size();
-          if ((s.height >= 3) && (s.width >= 3)) {
-            R_ = T_.rowRange(0,3).colRange(0,3).t();
-            t_ = -R_*T_.rowRange(0,3).col(3);
-            vector<float> q = ORB_SLAM3::Converter::toQuaternion(R_);
-            float scale_factor=1.0;
-            tf::Transform transform;
-            transform.setOrigin(tf::Vector3(t_.at<float>(0, 0)*scale_factor, t_.at<float>(0, 1)*scale_factor, t_.at<float>(0, 2)*scale_factor));
-            tf::Quaternion tf_quaternion(q[0], q[1], q[2], q[3]);
-            transform.setRotation(tf_quaternion);
-          /*
-          if (pub_tf)
-            {
-              static tf::TransformBroadcaster br_;
-              br_.sendTransform(tf::StampedTransform(transform, ros::Time(tIm), "world", "ORB_SLAM3_MONO_INERTIAL"));
-            }
-          */
-
-          if (pub_pose)
-            {
-              geometry_msgs::PoseStamped pose;
-              //pose.header.stamp = img0Buf.front()->header.stamp;
-              pose.header.frame_id ="ORB_SLAM3_MONO_INERTIAL";
-              tf::poseTFToMsg(transform, pose.pose);
-              orb_pub->publish(pose);
-            }            
-          }
-        }
-     }
+        publish_ros_tracking_mappoints(mpSLAM->GetTrackedMapPoints(), current_frame_time);
 
       std::chrono::milliseconds tSleep(1);
       std::this_thread::sleep_for(tSleep);
@@ -339,10 +256,9 @@ void ImageGrabber::SyncWithImu()
 
 void ImuGrabber::GrabImu(const sensor_msgs::ImuConstPtr &imu_msg)
 {
-  mBufMutex.lock();
-  imuBuf.push(imu_msg);
-  mBufMutex.unlock();
-  return;
+    mBufMutex.lock();
+    imuBuf.push(imu_msg);
+    mBufMutex.unlock();
+    return;
 }
-
 
