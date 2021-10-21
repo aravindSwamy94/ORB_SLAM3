@@ -65,6 +65,9 @@ int main(int argc, char **argv)
   // Create SLAM system. It initializes all system threads and gets ready to process frames.
   ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::IMU_STEREO,true);
 
+    n.param<std::string>("map_frame_id", map_frame_id, "map");
+    n.param<std::string>("pose_frame_id", pose_frame_id, "pose");
+
   ImuGrabber imugb;
   ImageGrabber igb(&SLAM,&imugb,sbRect == "true",bEqual);
   
