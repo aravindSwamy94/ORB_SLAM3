@@ -14,6 +14,7 @@
 #include <opencv2/core/core.hpp>
 #include <tf/transform_broadcaster.h>
 #include <image_transport/image_transport.h>
+#include <nav_msgs/Odometry.h>
 
 #include <std_msgs/Header.h>
 #include <sensor_msgs/Imu.h>

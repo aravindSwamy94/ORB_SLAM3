@@ -20,7 +20,7 @@ tf::Matrix3x3 tf_orb_to_ros(1, 0, 0,
 
 void setup_ros_publishers(ros::NodeHandle &node_handler, image_transport::ImageTransport &image_transport)
 {
-    pose_pub = node_handler.advertise<geometry_msgs::PoseStamped> ("/orb_slam3_ros/camera", 1);
+    pose_pub = node_handler.advertise<nav_msgs::Odometry> ("/orb_slam3_ros/camera", 1);
 
     map_points_pub = node_handler.advertise<sensor_msgs::PointCloud2>("/orb_slam3_ros/map_points", 1);
 
@@ -53,8 +53,14 @@ void publish_pose_stamped(tf::Transform tf_transform, ros::Time current_frame_ti
     geometry_msgs::PoseStamped pose_msg;
 
     tf::poseStampedTFToMsg(grasp_tf_pose, pose_msg);
+ 
+    nav_msgs::Odometry nav_msg;
+    
+    nav_msg.header = pose_msg.header;
+    nav_msg.child_frame_id = pose_frame_id;
+    nav_msg.pose.pose = pose_msg.pose;  
 
-    pose_pub.publish(pose_msg);
+    pose_pub.publish(nav_msg);
 }
 
 void publish_ros_tracking_img(cv::Mat image, ros::Time current_frame_time)

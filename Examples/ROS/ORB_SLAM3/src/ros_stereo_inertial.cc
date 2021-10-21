@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     ros::Subscriber sub_img_left = n.subscribe("/camera/fisheye1/image_raw", 100, &ImageGrabber::GrabImageLeft, &igb);
     ros::Subscriber sub_img_right = n.subscribe("/camera/fisheye2/image_raw", 100, &ImageGrabber::GrabImageRight, &igb);
 
-    pose_pub = n.advertise<geometry_msgs::PoseStamped> ("/orb_slam3_ros/camera", 1);
+    pose_pub = n.advertise<nav_msgs::Odometry> ("/orb_slam3_ros/camera", 1);
     map_points_pub = n.advertise<sensor_msgs::PointCloud2>("/orb_slam3_ros/map_points", 1);
 
     setup_tf_orb_to_ros(ORB_SLAM3::System::IMU_STEREO);
