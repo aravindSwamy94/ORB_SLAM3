@@ -22,9 +22,9 @@ void setup_ros_publishers(ros::NodeHandle &node_handler, image_transport::ImageT
 {
     pose_pub = node_handler.advertise<geometry_msgs::PoseStamped> ("/orb_slam3_ros/camera", 1);
 
-    map_points_pub = node_handler.advertise<sensor_msgs::PointCloud2>("orb_slam3_ros/map_points", 1);
+    map_points_pub = node_handler.advertise<sensor_msgs::PointCloud2>("/orb_slam3_ros/map_points", 1);
 
-    rendered_image_pub = image_transport.advertise("orb_slam3_ros/tracking_image", 1);
+    rendered_image_pub = image_transport.advertise("/orb_slam3_ros/tracking_image", 1);
 }
 
 void publish_ros_pose_tf(cv::Mat Tcw, ros::Time current_frame_time, ORB_SLAM3::System::eSensor sensor_type)
